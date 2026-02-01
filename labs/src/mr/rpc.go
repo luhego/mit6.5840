@@ -17,12 +17,12 @@ type GetTaskArgs struct {
 }
 
 type GetTaskReply struct {
-	TaskType string // Map, Reduce
-	TaskID   int64  // Unique task ID
-	NMap     int    // Number of Map Tasks. Needed for reduce step
-	NReduce  int    // Number of Reduce tasks. Needed to create NReduce files
-	MapFile  string // File to process using Map func
-	Action   string // Wait, Exit, Run
+	TaskType TaskType   // Map, Reduce
+	TaskID   int        // Unique task ID
+	NMap     int        // Number of Map Tasks. Needed for reduce step
+	NReduce  int        // Number of Reduce tasks. Needed to create NReduce files
+	MapFile  string     // File to process using Map func
+	Action   TaskAction // Wait, Exit, Run
 }
 
 // Cook up a unique-ish UNIX-domain socket name

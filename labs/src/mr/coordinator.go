@@ -2,10 +2,12 @@ package mr
 
 import (
 	"log"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/rpc"
 	"os"
+	"sync"
 	"time"
 )
 
@@ -19,15 +21,23 @@ const (
 type TaskState int
 
 const (
-	Idle TaskState = iota
+	ToBeStarted TaskState = iota
 	InProgress
 	Done
+)
+
+type TaskAction int
+
+const (
+	Wait TaskAction = iota
+	Exit
+	Run
 )
 
 type Task struct {
 	TaskID    int
 	Type      TaskType  // Map, Reduce
-	State     TaskState // Idle, InProgress, Done
+	State     TaskState // ToBeStarted, InProgress, Done
 	WorkerID  int
 	StartTime time.Time
 	Input     string
@@ -39,12 +49,46 @@ type Coordinator struct {
 	NReduce     int
 	MapTasks    []Task
 	ReduceTasks []Task
+	mu          sync.Mutex
 }
 
 // Your code here -- RPC handlers for the worker to call.
 
 func (c *Coordinator) GetTask(args *GetTaskArgs, reply *GetTaskReply) error {
-	// complete it
+	// Check if any Map task is in state ToBeStarted
+	doneCounter := 0
+	for _, task := range c.MapTasks {
+		switch task.State {
+		case ToBeStarted:
+			reply.TaskType = task.Type
+			reply.TaskID = task.TaskID
+			reply.NMap = c.NMap
+			reply.NReduce = c.NReduce
+			reply.MapFile = task.Input
+			reply.Action = Run
+			return nil
+		case Done:
+			doneCounter++
+		}
+	}
+
+	// Map phase hasn't completed yet
+	if doneCounter < c.NMap {
+		return nil
+	}
+
+	// Check if any Reduce task is in state ToBeStarted
+	for _, task := range c.ReduceTasks {
+		if task.State == ToBeStarted {
+			reply.TaskType = task.Type
+			reply.TaskID = task.TaskID
+			reply.NMap = c.NMap
+			reply.NReduce = c.NReduce
+			reply.Action = Run
+		}
+	}
+
+	return nil
 }
 
 // start a thread that listens for RPCs from worker.go
@@ -76,6 +120,9 @@ func (c *Coordinator) Done() bool {
 // main/mrcoordinator.go calls this function.
 // nReduce is the number of reduce tasks to use.
 func MakeCoordinator(files []string, nReduce int) *Coordinator {
+	jsonHandler := slog.NewJSONHandler(os.Stderr, nil)
+	slog := slog.New(jsonHandler)
+
 	// Create map tasks
 	mapTasks := createMapTasks(files)
 	// Create reduce tasks
@@ -83,22 +130,28 @@ func MakeCoordinator(files []string, nReduce int) *Coordinator {
 
 	c := Coordinator{NMap: len(files), NReduce: nReduce, MapTasks: mapTasks, ReduceTasks: reduceTasks}
 
+	slog.Info("Coordinator created", "NMap", c.NMap, "NReduce", c.NReduce)
+
 	c.server()
 	return &c
 }
 
 func createMapTasks(files []string) []Task {
+	nextTaskId := 0
 	tasks := make([]Task, len(files))
 	for i, file := range files {
-		tasks[i] = Task{Type: Map, State: Idle, Input: file}
+		tasks[i] = Task{TaskID: nextTaskId, Type: Map, State: ToBeStarted, Input: file}
+		nextTaskId++
 	}
 	return tasks
 }
 
 func createReduceTasks(nReduce int) []Task {
+	nextTaskId := 0
 	tasks := make([]Task, nReduce)
 	for i := 0; i < nReduce; i++ {
-		tasks[i] = Task{Type: Reduce, State: Idle}
+		tasks[i] = Task{TaskID: nextTaskId, Type: Reduce, State: ToBeStarted}
+		nextTaskId++
 	}
 	return tasks
 }
