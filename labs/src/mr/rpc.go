@@ -25,6 +25,16 @@ type GetTaskReply struct {
 	Action   TaskAction // Wait, Exit, Run
 }
 
+type ReportTaskArgs struct {
+	WorkerId int
+	TaskType TaskType
+	TaskID   int
+}
+
+type ReportTaskReply struct {
+	Ok bool
+}
+
 // Cook up a unique-ish UNIX-domain socket name
 // in /var/tmp, for the coordinator.
 // Can't use the current directory since

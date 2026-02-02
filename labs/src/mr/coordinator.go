@@ -53,41 +53,78 @@ type Coordinator struct {
 }
 
 // Your code here -- RPC handlers for the worker to call.
-
-func (c *Coordinator) GetTask(args *GetTaskArgs, reply *GetTaskReply) error {
-	// Check if any Map task is in state ToBeStarted
-	doneCounter := 0
-	for _, task := range c.MapTasks {
-		switch task.State {
-		case ToBeStarted:
-			reply.TaskType = task.Type
-			reply.TaskID = task.TaskID
-			reply.NMap = c.NMap
-			reply.NReduce = c.NReduce
-			reply.MapFile = task.Input
-			reply.Action = Run
-			return nil
-		case Done:
-			doneCounter++
+func findIdleTask(tasks []Task) (int, bool) {
+	for idx, task := range tasks {
+		if task.State == ToBeStarted {
+			return idx, true
 		}
 	}
+	return -1, false
+}
 
-	// Map phase hasn't completed yet
-	if doneCounter < c.NMap {
+func allDone(tasks []Task) bool {
+	for _, task := range tasks {
+		if task.State != Done {
+			return false
+		}
+	}
+	return true
+}
+
+func (c *Coordinator) fillReplyForTask(reply *GetTaskReply, task *Task) {
+	reply.TaskType = task.Type
+	reply.TaskID = task.TaskID
+	reply.NMap = c.NMap
+	reply.NReduce = c.NReduce
+	reply.MapFile = task.Input
+	reply.Action = Run
+}
+
+func (c *Coordinator) GetTask(args *GetTaskArgs, reply *GetTaskReply) error {
+	log.Printf("GetTask. WorkerID: %d", args.WorkerId)
+
+	// Map phase
+	if idx, ok := findIdleTask(c.MapTasks); ok {
+		c.MapTasks[idx].State = InProgress
+		c.fillReplyForTask(reply, &c.MapTasks[idx])
 		return nil
 	}
 
-	// Check if any Reduce task is in state ToBeStarted
-	for _, task := range c.ReduceTasks {
-		if task.State == ToBeStarted {
-			reply.TaskType = task.Type
-			reply.TaskID = task.TaskID
-			reply.NMap = c.NMap
-			reply.NReduce = c.NReduce
-			reply.Action = Run
-		}
+	// Let worker wait if not all map tasks are done
+	if !allDone(c.MapTasks) {
+		reply.Action = Wait
+		return nil
 	}
 
+	// Reduce phase
+	if idx, ok := findIdleTask(c.ReduceTasks); ok {
+		c.ReduceTasks[idx].State = InProgress
+		c.fillReplyForTask(reply, &c.ReduceTasks[idx])
+		return nil
+	}
+
+	// Let worker wait if not all reduce tasks are done
+	if !allDone(c.ReduceTasks) {
+		reply.Action = Wait
+		return nil
+	}
+
+	// All tasks have been completed
+	reply.Action = Exit
+	return nil
+
+}
+
+func (c *Coordinator) ReportTask(args *ReportTaskArgs, reply *ReportTaskReply) error {
+	log.Printf("ReportTask. WorkerID: %d. TaskType: %d, TaskID: %d", args.WorkerId, args.TaskType, args.TaskID)
+
+	if args.TaskType == Map {
+		c.MapTasks[args.TaskID].State = Done
+	} else {
+		c.ReduceTasks[args.TaskID].State = Done
+	}
+
+	reply.Ok = true
 	return nil
 }
 
@@ -137,21 +174,17 @@ func MakeCoordinator(files []string, nReduce int) *Coordinator {
 }
 
 func createMapTasks(files []string) []Task {
-	nextTaskId := 0
 	tasks := make([]Task, len(files))
 	for i, file := range files {
-		tasks[i] = Task{TaskID: nextTaskId, Type: Map, State: ToBeStarted, Input: file}
-		nextTaskId++
+		tasks[i] = Task{TaskID: i, Type: Map, State: ToBeStarted, Input: file}
 	}
 	return tasks
 }
 
 func createReduceTasks(nReduce int) []Task {
-	nextTaskId := 0
 	tasks := make([]Task, nReduce)
 	for i := 0; i < nReduce; i++ {
-		tasks[i] = Task{TaskID: nextTaskId, Type: Reduce, State: ToBeStarted}
-		nextTaskId++
+		tasks[i] = Task{TaskID: i, Type: Reduce, State: ToBeStarted}
 	}
 	return tasks
 }

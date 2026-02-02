@@ -1,8 +1,10 @@
 package mr
 
 import (
+	"encoding/json"
 	"fmt"
 	"hash/fnv"
+	"io"
 	"log"
 	"net/rpc"
 	"os"
@@ -28,21 +30,70 @@ func Worker(mapf func(string, string) []KeyValue,
 	reducef func(string, []string) string) {
 
 	// Your worker implementation here.
+	workerId := os.Getpid()
 	for {
 		log.Println("Requesting task")
 		time.Sleep(time.Second)
 
-		getTaskArgs := &GetTaskArgs{WorkerId: os.Getpid()}
+		getTaskArgs := &GetTaskArgs{WorkerId: workerId}
 		getTaskReply := &GetTaskReply{}
 		if !call("Coordinator.GetTask", &getTaskArgs, &getTaskReply) {
 			log.Fatal("Error when calling Coordinator RPC server")
 		}
-		log.Println(getTaskReply)
+
+		switch getTaskReply.Action {
+		case Wait:
+			time.Sleep(time.Second * 2)
+		case Exit:
+			log.Printf("All tasks have been completed. Stopping worker %v\n", workerId)
+			return
+		case Run:
+			if getTaskReply.TaskType == Map {
+				handleMapTask(workerId, getTaskReply.MapFile, getTaskReply.TaskID, getTaskReply.NReduce, mapf)
+			}
+		}
+	}
+}
+
+func handleMapTask(workerId int, filename string, taskID int, nReduce int, mapf func(string, string) []KeyValue) {
+	intermediate := []KeyValue{}
+	file, err := os.Open(filename)
+	if err != nil {
+		log.Fatalf("cannot open %v", filename)
+	}
+	defer file.Close()
+	content, err := io.ReadAll(file)
+	if err != nil {
+		log.Fatalf("cannot read %v", filename)
+	}
+	kva := mapf(filename, string(content))
+	intermediate = append(intermediate, kva...)
+
+	buckets := make([][]KeyValue, nReduce)
+	for _, kv := range intermediate {
+		bIndex := ihash(kv.Key) % nReduce
+		buckets[bIndex] = append(buckets[bIndex], kv)
 	}
 
-	// uncomment to send the Example RPC to the coordinator.
-	// CallExample()
+	for r, bucket := range buckets {
+		oname := fmt.Sprintf("mr-%d-%d", taskID, r)
+		ofile, _ := os.Create(oname)
+		enc := json.NewEncoder(ofile)
+		for _, kv := range bucket {
+			err := enc.Encode(&kv)
+			if err != nil {
+				log.Fatalf("cannot encode %v", err)
+			}
+		}
+		ofile.Close()
+	}
 
+	log.Println("Reporting task")
+	args := &ReportTaskArgs{WorkerId: workerId, TaskType: Map, TaskID: taskID}
+	reply := &ReportTaskReply{}
+	if !call("Coordinator.ReportTask", &args, &reply) {
+		log.Fatal("Error when calling Coordinator RPC server")
+	}
 }
 
 //
