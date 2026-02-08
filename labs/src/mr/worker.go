@@ -51,7 +51,7 @@ func Worker(mapf func(string, string) []KeyValue,
 
 		switch reply.Action {
 		case Wait:
-			time.Sleep(time.Second * 2)
+			time.Sleep(time.Second * 1)
 		case Exit:
 			log.Printf("All tasks have been completed. Stopping worker %v\n", workerId)
 			return
@@ -114,6 +114,7 @@ func handleReduceTask(workerID int, taskID int, nMap int, reducef func(string, [
 		if err != nil {
 			log.Fatalf("cannot open %v", filename)
 		}
+		defer file.Close()
 
 		dec := json.NewDecoder(file)
 		for {

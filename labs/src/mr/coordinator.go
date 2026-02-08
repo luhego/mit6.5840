@@ -11,6 +11,8 @@ import (
 	"time"
 )
 
+const TaskTimeout = 10 * time.Second
+
 type TaskType int
 
 const (
@@ -57,6 +59,8 @@ func findIdleTask(tasks []Task) (int, bool) {
 	for idx, task := range tasks {
 		if task.State == ToBeStarted {
 			return idx, true
+		} else if task.State == InProgress && time.Since(task.StartTime) > TaskTimeout {
+			return idx, true
 		}
 	}
 	return -1, false
@@ -80,12 +84,18 @@ func (c *Coordinator) fillReplyForTask(reply *GetTaskReply, task *Task) {
 	reply.Action = Run
 }
 
+func (c *Coordinator) assignTask(task *Task, workerId int) {
+	task.State = InProgress
+	task.StartTime = time.Now()
+	task.WorkerID = workerId
+}
+
 func (c *Coordinator) GetTask(args *GetTaskArgs, reply *GetTaskReply) error {
 	log.Printf("GetTask. WorkerID: %d", args.WorkerId)
 
 	// Map phase
 	if idx, ok := findIdleTask(c.MapTasks); ok {
-		c.MapTasks[idx].State = InProgress
+		c.assignTask(&c.MapTasks[idx], args.WorkerId)
 		c.fillReplyForTask(reply, &c.MapTasks[idx])
 		return nil
 	}
@@ -98,7 +108,7 @@ func (c *Coordinator) GetTask(args *GetTaskArgs, reply *GetTaskReply) error {
 
 	// Reduce phase
 	if idx, ok := findIdleTask(c.ReduceTasks); ok {
-		c.ReduceTasks[idx].State = InProgress
+		c.assignTask(&c.ReduceTasks[idx], args.WorkerId)
 		c.fillReplyForTask(reply, &c.ReduceTasks[idx])
 		return nil
 	}
@@ -119,8 +129,17 @@ func (c *Coordinator) ReportTask(args *ReportTaskArgs, reply *ReportTaskReply) e
 	log.Printf("ReportTask. WorkerID: %d. TaskType: %d, TaskID: %d", args.WorkerId, args.TaskType, args.TaskID)
 
 	if args.TaskType == Map {
+		// Stale worker
+		if c.MapTasks[args.TaskID].WorkerID != args.WorkerId {
+			return nil
+		}
+
 		c.MapTasks[args.TaskID].State = Done
 	} else {
+		// Stale worker
+		if c.ReduceTasks[args.TaskID].WorkerID != args.WorkerId {
+			return nil
+		}
 		c.ReduceTasks[args.TaskID].State = Done
 	}
 

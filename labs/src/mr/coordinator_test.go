@@ -1,6 +1,9 @@
 package mr
 
-import "testing"
+import (
+	"testing"
+	"time"
+)
 
 func newTestCoord(nMap, nReduce int) *Coordinator {
 	c := &Coordinator{
@@ -50,6 +53,7 @@ func TestGetTask_WaitBeforeAllMapsDone(t *testing.T) {
 	c := newTestCoord(2, 1)
 	c.MapTasks[0].State = Done
 	c.MapTasks[1].State = InProgress
+	c.MapTasks[1].StartTime = time.Now()
 
 	args := &GetTaskArgs{WorkerId: 1}
 	reply := &GetTaskReply{}
@@ -82,5 +86,43 @@ func TestGetTask_ExitWhenAllDone(t *testing.T) {
 	_ = c.GetTask(args, reply)
 	if reply.Action != Exit {
 		t.Fatalf("expected Exit, got %v", reply.Action)
+	}
+}
+
+func TestGetTask_ReassignsTimedOutMap(t *testing.T) {
+	c := newTestCoord(1, 1)
+	c.MapTasks[0].State = InProgress
+	c.MapTasks[0].StartTime = time.Now().Add(-TaskTimeout - time.Second)
+
+	args := &GetTaskArgs{WorkerId: 7}
+	reply := &GetTaskReply{}
+	_ = c.GetTask(args, reply)
+	if reply.Action != Run || reply.TaskType != Map || reply.TaskID != 0 {
+		t.Fatalf("expected reassigned Map task, to type=%v action%v id=%v", reply.TaskType, reply.Action, reply.TaskID)
+	}
+}
+
+func TestReportTask_MarksDone(t *testing.T) {
+	c := newTestCoord(1, 1)
+	args := &ReportTaskArgs{WorkerId: 1, TaskType: 1, TaskID: 0}
+	reply := &ReportTaskReply{}
+	_ = c.ReportTask(args, reply)
+	if c.MapTasks[0].State != Done {
+
+	}
+}
+
+func TestReportTask_IgnoresStaleWorker(t *testing.T) {
+	c := newTestCoord(1, 1)
+	c.MapTasks[0].State = InProgress
+	c.MapTasks[0].WorkerID = 1
+	c.MapTasks[0].StartTime = time.Unix(0, 0)
+
+	args := &ReportTaskArgs{WorkerId: 2, TaskType: Map, TaskID: 0}
+	reply := &ReportTaskReply{}
+	_ = c.ReportTask(args, reply)
+
+	if c.MapTasks[0].State == Done {
+		t.Fatalf("expected state report to be ignored")
 	}
 }
