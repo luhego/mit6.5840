@@ -56,6 +56,9 @@ type Coordinator struct {
 
 // Your code here -- RPC handlers for the worker to call.
 func (c *Coordinator) GetTask(args *GetTaskArgs, reply *GetTaskReply) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
 	log.Printf("GetTask. WorkerID: %d", args.WorkerId)
 
 	// Map phase
@@ -92,6 +95,8 @@ func (c *Coordinator) GetTask(args *GetTaskArgs, reply *GetTaskReply) error {
 
 func (c *Coordinator) ReportTask(args *ReportTaskArgs, reply *ReportTaskReply) error {
 	log.Printf("ReportTask. WorkerID: %d. TaskType: %d, TaskID: %d", args.WorkerID, args.TaskType, args.TaskID)
+	c.mu.Lock()
+	defer c.mu.Unlock()
 
 	if args.TaskType == Map {
 		// Stale worker
@@ -167,6 +172,8 @@ func (c *Coordinator) server() {
 // main/mrcoordinator.go calls Done() periodically to find out
 // if the entire job has finished.
 func (c *Coordinator) Done() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	for _, task := range c.ReduceTasks {
 		if task.State != Done {
 			return false
