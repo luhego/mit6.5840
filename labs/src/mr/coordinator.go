@@ -55,41 +55,6 @@ type Coordinator struct {
 }
 
 // Your code here -- RPC handlers for the worker to call.
-func findIdleTask(tasks []Task) (int, bool) {
-	for idx, task := range tasks {
-		if task.State == ToBeStarted {
-			return idx, true
-		} else if task.State == InProgress && time.Since(task.StartTime) > TaskTimeout {
-			return idx, true
-		}
-	}
-	return -1, false
-}
-
-func allDone(tasks []Task) bool {
-	for _, task := range tasks {
-		if task.State != Done {
-			return false
-		}
-	}
-	return true
-}
-
-func (c *Coordinator) fillReplyForTask(reply *GetTaskReply, task *Task) {
-	reply.TaskType = task.Type
-	reply.TaskID = task.TaskID
-	reply.NMap = c.NMap
-	reply.NReduce = c.NReduce
-	reply.MapFile = task.Input
-	reply.Action = Run
-}
-
-func (c *Coordinator) assignTask(task *Task, workerId int) {
-	task.State = InProgress
-	task.StartTime = time.Now()
-	task.WorkerID = workerId
-}
-
 func (c *Coordinator) GetTask(args *GetTaskArgs, reply *GetTaskReply) error {
 	log.Printf("GetTask. WorkerID: %d", args.WorkerId)
 
@@ -126,18 +91,18 @@ func (c *Coordinator) GetTask(args *GetTaskArgs, reply *GetTaskReply) error {
 }
 
 func (c *Coordinator) ReportTask(args *ReportTaskArgs, reply *ReportTaskReply) error {
-	log.Printf("ReportTask. WorkerID: %d. TaskType: %d, TaskID: %d", args.WorkerId, args.TaskType, args.TaskID)
+	log.Printf("ReportTask. WorkerID: %d. TaskType: %d, TaskID: %d", args.WorkerID, args.TaskType, args.TaskID)
 
 	if args.TaskType == Map {
 		// Stale worker
-		if c.MapTasks[args.TaskID].WorkerID != args.WorkerId {
+		if c.MapTasks[args.TaskID].WorkerID != args.WorkerID {
 			return nil
 		}
 
 		c.MapTasks[args.TaskID].State = Done
 	} else {
 		// Stale worker
-		if c.ReduceTasks[args.TaskID].WorkerID != args.WorkerId {
+		if c.ReduceTasks[args.TaskID].WorkerID != args.WorkerID {
 			return nil
 		}
 		c.ReduceTasks[args.TaskID].State = Done
@@ -146,6 +111,44 @@ func (c *Coordinator) ReportTask(args *ReportTaskArgs, reply *ReportTaskReply) e
 	reply.Ok = true
 	return nil
 }
+
+// -------- HELPERS --------------
+func (c *Coordinator) fillReplyForTask(reply *GetTaskReply, task *Task) {
+	reply.TaskType = task.Type
+	reply.TaskID = task.TaskID
+	reply.NMap = c.NMap
+	reply.NReduce = c.NReduce
+	reply.MapFile = task.Input
+	reply.Action = Run
+}
+
+func (c *Coordinator) assignTask(task *Task, workerID int) {
+	task.State = InProgress
+	task.StartTime = time.Now()
+	task.WorkerID = workerID
+}
+
+func findIdleTask(tasks []Task) (int, bool) {
+	for idx, task := range tasks {
+		if task.State == ToBeStarted {
+			return idx, true
+		} else if task.State == InProgress && time.Since(task.StartTime) > TaskTimeout {
+			return idx, true
+		}
+	}
+	return -1, false
+}
+
+func allDone(tasks []Task) bool {
+	for _, task := range tasks {
+		if task.State != Done {
+			return false
+		}
+	}
+	return true
+}
+
+// -------- HELPERS --------------
 
 // start a thread that listens for RPCs from worker.go
 func (c *Coordinator) server() {

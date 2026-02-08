@@ -25,6 +25,9 @@ func (a ByKey) Len() int           { return len(a) }
 func (a ByKey) Swap(i, j int)      { a[i], a[j] = a[j], a[i] }
 func (a ByKey) Less(i, j int) bool { return a[i].Key < a[j].Key }
 
+const pollInterval = 1 * time.Second
+const waitInterval = 2 * time.Second
+
 // use ihash(key) % NReduce to choose the reduce
 // task number for each KeyValue emitted by Map.
 func ihash(key string) int {
@@ -38,12 +41,12 @@ func Worker(mapf func(string, string) []KeyValue,
 	reducef func(string, []string) string) {
 
 	// Your worker implementation here.
-	workerId := os.Getpid()
+	workerID := os.Getpid()
 	for {
-		log.Println("Requesting task")
-		time.Sleep(time.Second)
+		time.Sleep(pollInterval)
 
-		args := &GetTaskArgs{WorkerId: workerId}
+		log.Println("Requesting task")
+		args := &GetTaskArgs{WorkerId: workerID}
 		reply := &GetTaskReply{}
 		if !call("Coordinator.GetTask", &args, &reply) {
 			log.Fatal("Error when calling Coordinator RPC server")
@@ -51,22 +54,21 @@ func Worker(mapf func(string, string) []KeyValue,
 
 		switch reply.Action {
 		case Wait:
-			time.Sleep(time.Second * 1)
+			time.Sleep(waitInterval)
 		case Exit:
-			log.Printf("All tasks have been completed. Stopping worker %v\n", workerId)
+			log.Printf("All tasks have been completed. Stopping worker %v\n", workerID)
 			return
 		case Run:
 			if reply.TaskType == Map {
-				handleMapTask(workerId, reply.MapFile, reply.TaskID, reply.NReduce, mapf)
+				handleMapTask(workerID, reply.MapFile, reply.TaskID, reply.NReduce, mapf)
 			} else {
-				handleReduceTask(workerId, reply.TaskID, reply.NMap, reducef)
+				handleReduceTask(workerID, reply.TaskID, reply.NMap, reducef)
 			}
 		}
 	}
 }
 
-func handleMapTask(workerId int, filename string, taskID int, nReduce int, mapf func(string, string) []KeyValue) {
-	intermediate := []KeyValue{}
+func handleMapTask(workerID int, filename string, taskID int, nReduce int, mapf func(string, string) []KeyValue) {
 	file, err := os.Open(filename)
 	if err != nil {
 		log.Fatalf("cannot open %v", filename)
@@ -76,9 +78,7 @@ func handleMapTask(workerId int, filename string, taskID int, nReduce int, mapf 
 	if err != nil {
 		log.Fatalf("cannot read %v", filename)
 	}
-	kva := mapf(filename, string(content))
-	intermediate = append(intermediate, kva...)
-
+	intermediate := mapf(filename, string(content))
 	buckets := make([][]KeyValue, nReduce)
 	for _, kv := range intermediate {
 		bIndex := ihash(kv.Key) % nReduce
@@ -98,12 +98,7 @@ func handleMapTask(workerId int, filename string, taskID int, nReduce int, mapf 
 		ofile.Close()
 	}
 
-	log.Println("Reporting task")
-	args := &ReportTaskArgs{WorkerId: workerId, TaskType: Map, TaskID: taskID}
-	reply := &ReportTaskReply{}
-	if !call("Coordinator.ReportTask", &args, &reply) {
-		log.Fatal("Error when calling Coordinator RPC server")
-	}
+	reportTask(workerID, Map, taskID)
 }
 
 func handleReduceTask(workerID int, taskID int, nMap int, reducef func(string, []string) string) {
@@ -114,8 +109,6 @@ func handleReduceTask(workerID int, taskID int, nMap int, reducef func(string, [
 		if err != nil {
 			log.Fatalf("cannot open %v", filename)
 		}
-		defer file.Close()
-
 		dec := json.NewDecoder(file)
 		for {
 			var kv KeyValue
@@ -124,6 +117,7 @@ func handleReduceTask(workerID int, taskID int, nMap int, reducef func(string, [
 			}
 			intermediate = append(intermediate, kv)
 		}
+		file.Close()
 	}
 	sort.Sort(ByKey(intermediate))
 
@@ -146,13 +140,16 @@ func handleReduceTask(workerID int, taskID int, nMap int, reducef func(string, [
 		i = j
 	}
 
+	reportTask(workerID, Reduce, taskID)
+}
+
+func reportTask(workerID int, taskType TaskType, taskID int) {
 	log.Println("Reporting task")
-	args := &ReportTaskArgs{WorkerId: workerID, TaskType: Reduce, TaskID: taskID}
+	args := &ReportTaskArgs{WorkerID: workerID, TaskType: taskType, TaskID: taskID}
 	reply := &ReportTaskReply{}
 	if !call("Coordinator.ReportTask", &args, &reply) {
 		log.Fatal("Error when calling Coordinator RPC server")
 	}
-
 }
 
 // send an RPC request to the coordinator, wait for the response.

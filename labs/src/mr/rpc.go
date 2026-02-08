@@ -26,7 +26,7 @@ type GetTaskReply struct {
 }
 
 type ReportTaskArgs struct {
-	WorkerId int
+	WorkerID int
 	TaskType TaskType
 	TaskID   int
 }
